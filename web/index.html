@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Virtual Sensor Monitor</title>
+<style>
+:root{--bg:#f8f0ff;--card:#ffffff;--fg:#2d1b3d;--mut:#786887;--ok:#2e8b57;--warn:#c27a00;--crit:#d83a64;--acc:#a64dcf}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#fff5fb,#f3e8ff);color:var(--fg);font:15px system-ui,sans-serif;padding:16px;max-width:1200px;margin:auto}
+h1{font-size:20px;margin:0 0 4px}.sub{color:var(--mut);margin-bottom:14px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.card{background:rgba(255,255,255,.92);border:1px solid #ead8f2;border-radius:12px;padding:14px;box-shadow:0 6px 20px rgba(126,70,150,.10)}.card h2{font-size:13px;color:var(--mut);margin:0 0 8px;text-transform:uppercase;letter-spacing:.05em}
+.big{font-size:40px;font-weight:700}.pill{display:inline-block;padding:2px 10px;border-radius:99px;font-weight:600;font-size:13px}
+.NORMAL{background:#e8f6ee;color:var(--ok)}.WARNING{background:#fff3d6;color:var(--warn)}.CRITICAL{background:#ffe5ed;color:var(--crit)}
+.row{display:flex;justify-content:space-between;padding:3px 0}.mut{color:var(--mut)}
+button,input,select{background:#ffffff;color:var(--fg);border:1px solid #d8c4e8;border-radius:6px;padding:6px 10px;font:inherit}
+button{cursor:pointer}button:hover{border-color:var(--acc)}input{width:90px}
+.wide{grid-column:1/-1}canvas{width:100%;height:240px;display:block}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:4px 6px;border-bottom:1px solid #eadcf2}
+.tag{color:var(--warn);font-size:12px}.err{color:var(--crit)}.bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center}
+</style></head><body>
+<h1>Virtual Sensor Monitor</h1>
+<div class="sub">All readings are <b>simulated</b> — generated in software, not physical measurements.</div>
+<div class="grid">
+ <div class="card"><h2>System status</h2><div id="sys"></div></div>
+ <div class="card"><h2>Live sensor (simulated)</h2><div class="big" id="temp">--</div>
+  <span class="pill NORMAL" id="stat">--</span>
+  <div class="row"><span class="mut">Warning / Critical</span><span id="thr">--</span></div>
+  <div class="row"><span class="mut">Updated</span><span id="upd">--</span></div></div>
+ <div class="card"><h2>Controls</h2>
+  <div class="row"><label>Warning °C <input id="w" type="number" min="0" max="100" step="0.5"></label>
+  <label>Interval ms <input id="iv" type="number" min="100" max="10000" step="100"></label></div>
+  <div class="bar"><button onclick="applyCfg()">Apply</button><button onclick="post('/api/monitoring/start')">Start</button><button onclick="post('/api/monitoring/stop')">Stop</button></div>
+  <div class="bar"><span class="mut">Simulation:</span>
+   <button onclick="sim('normal')">Normal</button><button onclick="sim('high')">High</button><button onclick="sim('low')">Low</button><button onclick="sim('reset')">Reset</button></div>
+  <div class="bar"><button onclick="demo()">▶ Guided demo</button><span id="demoMsg" class="tag"></span></div>
+  <div id="msg" class="err"></div></div>
+ <div class="card wide"><h2>Temperature (simulated) with threshold lines</h2><canvas id="ch"></canvas></div>
+ <div class="card"><h2>Recent alerts</h2><table><tbody id="alerts"></tbody></table></div>
+ <div class="card" style="grid-column:span 2"><h2>Event log</h2>
+  <div class="bar" style="margin:0 0 8px"><select id="ft"><option value="">All types</option><option>READING</option><option>ALERT</option><option>STATE_CHANGE</option><option>CONFIG</option><option>SIM_MODE</option><option>MONITOR</option><option>DEVICE_ERROR</option></select>
+  <select id="fs"><option value="">All status</option><option>NORMAL</option><option>WARNING</option><option>CRITICAL</option></select>
+  <button onclick="loadEvents()">Refresh</button><a href="/api/events/export"><button>Export CSV</button></a></div>
+  <div style="max-height:260px;overflow:auto"><table><thead><tr><th>Time</th><th>°C</th><th>Status</th><th>Type</th><th>Message</th></tr></thead><tbody id="ev"></tbody></table></div></div>
+</div>
+<script>
+const $=id=>document.getElementById(id);let cfg={warning:40,critical:50},hist=[],cfgLoaded=false;
+const api=async(p,o)=>{const r=await fetch(p,o);const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||r.status);return j};
+const post=async(p,b)=>{try{await api(p,{method:'POST',body:JSON.stringify(b||{})});$('msg').textContent='';refresh()}catch(e){$('msg').textContent=e.message}};
+const sim=m=>post('/api/simulation/mode',{mode:m});
+function applyCfg(){post('/api/config',{warning:+$('w').value,interval_ms:+$('iv').value,critical_offset:cfg.critical-cfg.warning}).then(()=>cfgLoaded=false)}
+const t=s=>(s||'').slice(11,19);
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+async function refresh(){
+ try{
+  const [s,c,l,h,a]=await Promise.all([api('/api/status'),api('/api/config'),api('/api/readings/latest'),api('/api/readings/history?limit=120'),api('/api/alerts')]);
+  cfg=c;if(!cfgLoaded){$('w').value=c.warning;$('iv').value=c.interval_ms;cfgLoaded=true}
+  $('sys').innerHTML=`<div class="row"><span class="mut">Backend</span><span style="color:var(--ok)">connected</span></div>
+   <div class="row"><span class="mut">Device</span><span style="color:${s.device_available?'var(--ok)':'var(--crit)'}">${s.device_available?'available':'UNAVAILABLE'} (checked ${t(s.device_checked_at)})</span></div>
+   <div class="row"><span class="mut">Source</span><span>${esc(s.source)}</span></div>
+   <div class="row"><span class="mut">Monitoring</span><span>${s.monitoring?'running':'stopped'}</span></div>
+   <div class="row"><span class="mut">Last reading</span><span>${t(s.last_reading_ts)||'--'}</span></div>
+   ${s.last_error?`<div class="err">${esc(s.last_error)}</div>`:''}${s.log_error?`<div class="err">${esc(s.log_error)}</div>`:''}`;
+  if(l.available){$('temp').textContent=l.temperature_c.toFixed(1)+' °C';$('stat').textContent=l.status;$('stat').className='pill '+l.status;$('upd').textContent=t(l.timestamp)}
+  $('thr').textContent=c.warning.toFixed(1)+' / '+c.critical.toFixed(1)+' °C';
+  hist=h.readings;draw();
+  $('alerts').innerHTML=a.alerts.slice(-8).reverse().map(x=>`<tr><td>${t(x.timestamp)}</td><td>${x.reading_c.toFixed(1)}°C</td><td><span class="pill ${x.status}">${x.status}</span></td></tr>`).join('')||'<tr><td class="mut">No alerts</td></tr>';
+ }catch(e){$('sys').innerHTML=`<div class="err">Backend unreachable: ${esc(e.message)}</div>`}
+}
+async function loadEvents(){
+ const q=new URLSearchParams({type:$('ft').value,status:$('fs').value});
+ try{const r=await api('/api/events?'+q);$('ev').innerHTML=r.events.slice(-100).reverse().map(e=>`<tr><td>${t(e.timestamp)}</td><td>${e.reading_c.toFixed(1)}</td><td>${e.status}</td><td>${e.event_type}</td><td>${esc(e.message)}</td></tr>`).join('')}catch(e){}
+}
+function draw(){
+ const cv=$('ch'),dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;
+ const g=cv.getContext('2d');g.scale(dpr,dpr);g.clearRect(0,0,W,H);
+ const vals=hist.map(r=>r.temperature_c).concat([cfg.warning,cfg.critical]);
+ let lo=Math.min(...vals,0)-2,hi=Math.max(...vals,60)+2;const P=34;
+ const y=v=>H-14-(v-lo)/(hi-lo)*(H-24),x=i=>P+i/Math.max(hist.length-1,1)*(W-P-8);
+ g.font='11px system-ui';g.fillStyle='#8b98a5';g.strokeStyle='#243040';
+ for(let v=Math.ceil(lo/10)*10;v<=hi;v+=10){g.beginPath();g.moveTo(P,y(v));g.lineTo(W,y(v));g.stroke();g.fillText(v,2,y(v)+4)}
+ [[cfg.warning,'#d29922'],[cfg.critical,'#f85149']].forEach(([v,c])=>{g.strokeStyle=c;g.setLineDash([6,4]);g.beginPath();g.moveTo(P,y(v));g.lineTo(W,y(v));g.stroke()});
+ g.setLineDash([]);g.strokeStyle='#58a6ff';g.lineWidth=2;g.beginPath();
+ hist.forEach((r,i)=>i?g.lineTo(x(i),y(r.temperature_c)):g.moveTo(x(i),y(r.temperature_c)));g.stroke();g.lineWidth=1;
+}
+async function demo(){
+ const m=$('demoMsg'),sl=ms=>new Promise(r=>setTimeout(r,ms));
+ m.textContent='DEMO (simulated): reset…';await sim('reset');await sl(1500);
+ m.textContent='DEMO (simulated): normal readings…';await sim('normal');await sl(5000);
+ m.textContent='DEMO (simulated): injecting HIGH temperature…';await sim('high');await sl(9000);
+ m.textContent='DEMO (simulated): returning to normal…';await sim('low');await sl(1);await sim('normal');await sl(6000);
+ m.textContent='Demo finished. See Alerts and Event log.';loadEvents();
+}
+refresh();loadEvents();setInterval(refresh,1000);setInterval(loadEvents,3000);addEventListener('resize',draw);
+</script></body></html>

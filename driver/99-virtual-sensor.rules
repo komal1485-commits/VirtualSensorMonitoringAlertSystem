@@ -1,0 +1,2 @@
+# Install to /etc/udev/rules.d/ ; add your user to group "vsensor" (not root).
+KERNEL=="virtual_sensor", GROUP="vsensor", MODE="0660"

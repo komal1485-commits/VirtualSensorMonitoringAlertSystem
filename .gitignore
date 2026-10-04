@@ -1,0 +1,16 @@
+build/
+logs/*.csv
+*.ko
+*.o
+*.mod*
+.*.cmd
+Module.symvers
+modules.order
+
+# Secure Boot signing keys
+MOK.priv
+MOK.der
+
+# Temporary backup files
+*.backup
+*.bak
